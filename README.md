@@ -65,6 +65,16 @@ bundle 发生变化时执行检查：
 
 任何版本、锚点或 patch 校验失败都会停止修改并写入日志。
 
+## 效果示例
+
+### 联网搜索
+
+![ChatGPT Desktop 联网搜索示例](docs/images/web-search-example.png)
+
+### 图片生成
+
+![ChatGPT Desktop 图片生成示例](docs/images/image-generation-example.png)
+
 ## 已验证版本
 
 `v0.1.0` 已在以下组合完成编译、安装和重启验证：
