@@ -23,7 +23,26 @@ do
   fi
 done
 
-large_file=$(find "$PROJECT_DIR" -path "$PROJECT_DIR/.git" -prune -o -type f -size +100M -print -quit)
+for expected in \
+  'chatgpt-app-server-${version}' \
+  'path.join(SOURCE_DIR, ".build", "bin")'
+do
+  if ! /usr/bin/grep -Fq "$expected" "$PROJECT_DIR/fixer.mjs" "$PROJECT_DIR/build-backend.mjs"; then
+    print -u2 "Desktop app-server cache integration is missing: $expected"
+    exit 1
+  fi
+done
+
+large_file=$(
+  find "$PROJECT_DIR" \
+    \( \
+      -path "$PROJECT_DIR/.git" -o \
+      -path "$PROJECT_DIR/.build" -o \
+      -path "$PROJECT_DIR/bin" -o \
+      -path "$PROJECT_DIR/dist" -o \
+      -path "$PROJECT_DIR/node_modules" \
+    \) -prune -o -type f -size +100M -print -quit
+)
 if [[ -n "$large_file" ]]; then
   print -u2 "Repository contains a file larger than 100 MB: $large_file"
   exit 1

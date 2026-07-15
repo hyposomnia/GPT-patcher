@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR=${0:A:h}
 APP_PATH=${CHATGPT_APP_PATH:-/Applications/ChatGPT.app}
-CODEX_PATH="$APP_PATH/Contents/Resources/codex"
+BUNDLED_APP_SERVER_PATH="$APP_PATH/Contents/Resources/codex"
 NODE_PATH=${NODE_PATH:-$(command -v node || true)}
 BUILD_DIR=${GPT_PATCHER_BUILD_DIR:-"$SCRIPT_DIR/.build"}
 
@@ -12,13 +12,13 @@ if [[ ! -x "$NODE_PATH" ]]; then
   exit 1
 fi
 
-version=${CODEX_VERSION:-}
+version=${CHATGPT_APP_SERVER_VERSION:-${CODEX_VERSION:-}}
 if [[ -z "$version" ]]; then
-  if [[ ! -x "$CODEX_PATH" ]]; then
-    print -u2 "Cannot find the bundled ChatGPT app-server at: $CODEX_PATH"
+  if [[ ! -x "$BUNDLED_APP_SERVER_PATH" ]]; then
+    print -u2 "Cannot find the bundled ChatGPT app-server at: $BUNDLED_APP_SERVER_PATH"
     exit 1
   fi
-  version_output=$("$CODEX_PATH" --version)
+  version_output=$("$BUNDLED_APP_SERVER_PATH" --version)
   if [[ "$version_output" != "codex-cli "* ]]; then
     print -u2 "Cannot parse bundled app-server version: $version_output"
     exit 1
@@ -27,4 +27,4 @@ if [[ -z "$version" ]]; then
 fi
 
 "$NODE_PATH" "$SCRIPT_DIR/build-backend.mjs" "$version" "$BUILD_DIR" "$SCRIPT_DIR"
-print "Patched binary: $BUILD_DIR/bin/codex-$version"
+print "Patched ChatGPT Desktop app-server: $BUILD_DIR/bin/chatgpt-app-server-$version"

@@ -10,7 +10,7 @@ const APP_PATH = process.env.CHATGPT_APP_PATH ?? "/Applications/ChatGPT.app";
 const RESOURCES_PATH = path.join(APP_PATH, "Contents", "Resources");
 const INFO_PLIST_PATH = path.join(APP_PATH, "Contents", "Info.plist");
 const ASAR_PATH = path.join(RESOURCES_PATH, "app.asar");
-const BUNDLED_CODEX_PATH = path.join(RESOURCES_PATH, "codex");
+const BUNDLED_APP_SERVER_PATH = path.join(RESOURCES_PATH, "codex");
 const SOURCE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STATE_DIR =
   process.env.CHATGPT_FIXER_STATE_DIR ??
@@ -90,8 +90,8 @@ function appIdentity() {
   };
 }
 
-function bundledCodexVersion() {
-  const output = run(BUNDLED_CODEX_PATH, ["--version"]);
+function bundledAppServerVersion() {
+  const output = run(BUNDLED_APP_SERVER_PATH, ["--version"]);
   const match = output.match(/codex-cli\s+([^\s]+)/u);
   if (match == null) throw new Error(`Cannot parse bundled app-server version: ${output}`);
   return match[1];
@@ -138,7 +138,17 @@ function patchFrontend() {
 }
 
 function ensurePatchedBackend(version) {
-  const outputPath = path.join(STATE_DIR, "bin", `codex-${version}`);
+  const outputPath = path.join(STATE_DIR, "bin", `chatgpt-app-server-${version}`);
+  const legacyOutputPath = path.join(STATE_DIR, "bin", `codex-${version}`);
+  if (!fs.existsSync(outputPath) && fs.existsSync(legacyOutputPath)) {
+    try {
+      validatePatchedBackend(legacyOutputPath, version);
+      fs.renameSync(legacyOutputPath, outputPath);
+    } catch (error) {
+      console.warn(String(error?.message ?? error));
+      fs.rmSync(legacyOutputPath, { force: true });
+    }
+  }
   if (fs.existsSync(outputPath)) {
     try {
       validatePatchedBackend(outputPath, version);
@@ -162,7 +172,7 @@ function ensurePatchedBackend(version) {
 
 function installBackend(patchedBackend, app, previousState) {
   const patchedHash = hashFile(patchedBackend);
-  const bundledHash = hashFile(BUNDLED_CODEX_PATH);
+  const bundledHash = hashFile(BUNDLED_APP_SERVER_PATH);
   if (bundledHash === patchedHash) {
     return { changed: false, patchedHash };
   }
@@ -172,14 +182,14 @@ function installBackend(patchedBackend, app, previousState) {
   fs.mkdirSync(backupDir, { recursive: true });
   if (!fs.existsSync(backupPath)) {
     const wasPreviousPatch = bundledHash === previousState.patchedBackendHash;
-    if (!wasPreviousPatch) fs.copyFileSync(BUNDLED_CODEX_PATH, backupPath);
+    if (!wasPreviousPatch) fs.copyFileSync(BUNDLED_APP_SERVER_PATH, backupPath);
   }
 
-  const temporaryPath = `${BUNDLED_CODEX_PATH}.desktop-fixer-${process.pid}`;
+  const temporaryPath = `${BUNDLED_APP_SERVER_PATH}.desktop-fixer-${process.pid}`;
   fs.copyFileSync(patchedBackend, temporaryPath);
   fs.chmodSync(temporaryPath, 0o755);
-  fs.renameSync(temporaryPath, BUNDLED_CODEX_PATH);
-  if (hashFile(BUNDLED_CODEX_PATH) !== patchedHash) {
+  fs.renameSync(temporaryPath, BUNDLED_APP_SERVER_PATH);
+  if (hashFile(BUNDLED_APP_SERVER_PATH) !== patchedHash) {
     throw new Error("Bundled app-server verification failed after replacement");
   }
   return { changed: true, patchedHash };
@@ -253,14 +263,14 @@ function maintain() {
   }
 
   try {
-    for (const requiredPath of [INFO_PLIST_PATH, ASAR_PATH, BUNDLED_CODEX_PATH]) {
+    for (const requiredPath of [INFO_PLIST_PATH, ASAR_PATH, BUNDLED_APP_SERVER_PATH]) {
       if (!fs.existsSync(requiredPath)) throw new Error(`Missing ChatGPT file: ${requiredPath}`);
     }
 
     const previousState = readState();
     const app = appIdentity();
     const currentAsarIdentity = fileIdentity(ASAR_PATH);
-    const currentBackendIdentity = fileIdentity(BUNDLED_CODEX_PATH);
+    const currentBackendIdentity = fileIdentity(BUNDLED_APP_SERVER_PATH);
     if (
       previousState.appBuild === app.build &&
       previousState.asarSize === currentAsarIdentity.size &&
@@ -273,9 +283,9 @@ function maintain() {
     }
     const officialBackendChanged =
       previousState.appBuild !== app.build ||
-      hashFile(BUNDLED_CODEX_PATH) !== previousState.patchedBackendHash;
+      hashFile(BUNDLED_APP_SERVER_PATH) !== previousState.patchedBackendHash;
     const backendVersion = officialBackendChanged
-      ? bundledCodexVersion()
+      ? bundledAppServerVersion()
       : previousState.backendVersion;
     if (backendVersion == null) throw new Error("Cannot determine Desktop app-server version");
 
@@ -287,7 +297,7 @@ function maintain() {
         `ChatGPT changed during app-server build (${app.version}/${app.build} -> ${appAfterBuild.version}/${appAfterBuild.build}); retrying on the next maintenance run`,
       );
     }
-    const backendVersionAfterBuild = bundledCodexVersion();
+    const backendVersionAfterBuild = bundledAppServerVersion();
     if (backendVersionAfterBuild !== backendVersion) {
       throw new Error(
         `Bundled app-server changed during build (${backendVersion} -> ${backendVersionAfterBuild}); retrying on the next maintenance run`,
@@ -296,7 +306,7 @@ function maintain() {
 
     const frontend = patchFrontend();
     const appBeforeInstall = appIdentity();
-    const backendVersionBeforeInstall = bundledCodexVersion();
+    const backendVersionBeforeInstall = bundledAppServerVersion();
     if (
       appBeforeInstall.build !== app.build ||
       appBeforeInstall.version !== app.version ||
@@ -306,7 +316,7 @@ function maintain() {
     }
     const backend = installBackend(patchedBackend, app, previousState);
     const asarIdentity = fileIdentity(ASAR_PATH);
-    const backendIdentity = fileIdentity(BUNDLED_CODEX_PATH);
+    const backendIdentity = fileIdentity(BUNDLED_APP_SERVER_PATH);
     const nextState = {
       appBuild: app.build,
       appVersion: app.version,
@@ -370,10 +380,10 @@ function restore() {
 
   const backupPath = path.join(STATE_DIR, "backups", app.build, "codex.original");
   if (fs.existsSync(backupPath)) {
-    const temporaryPath = `${BUNDLED_CODEX_PATH}.desktop-fixer-restore-${process.pid}`;
+    const temporaryPath = `${BUNDLED_APP_SERVER_PATH}.desktop-fixer-restore-${process.pid}`;
     fs.copyFileSync(backupPath, temporaryPath);
     fs.chmodSync(temporaryPath, 0o755);
-    fs.renameSync(temporaryPath, BUNDLED_CODEX_PATH);
+    fs.renameSync(temporaryPath, BUNDLED_APP_SERVER_PATH);
   }
   writeState({ ...state, restoredAt: new Date().toISOString() });
   console.log("Restored the current ChatGPT build. Restart ChatGPT to reload it.");
@@ -414,9 +424,13 @@ function install() {
   fs.cpSync(path.join(SOURCE_DIR, "patches"), path.join(installedProgramDir, "patches"), {
     recursive: true,
   });
-  const bundledBins = path.join(SOURCE_DIR, "bin");
-  if (fs.existsSync(bundledBins)) {
-    fs.cpSync(bundledBins, path.join(STATE_DIR, "bin"), { recursive: true });
+  for (const localBuildCache of [
+    path.join(SOURCE_DIR, "bin"),
+    path.join(SOURCE_DIR, ".build", "bin"),
+  ]) {
+    if (fs.existsSync(localBuildCache)) {
+      fs.cpSync(localBuildCache, path.join(STATE_DIR, "bin"), { recursive: true });
+    }
   }
 
   fs.mkdirSync(path.dirname(AGENT_PATH), { recursive: true });
@@ -440,7 +454,7 @@ function install() {
   <array>
     <string>${xmlEscape(INFO_PLIST_PATH)}</string>
     <string>${xmlEscape(ASAR_PATH)}</string>
-    <string>${xmlEscape(BUNDLED_CODEX_PATH)}</string>
+    <string>${xmlEscape(BUNDLED_APP_SERVER_PATH)}</string>
   </array>
   <key>StandardOutPath</key><string>${xmlEscape(logPath)}</string>
   <key>StandardErrorPath</key><string>${xmlEscape(logPath)}</string>
@@ -478,7 +492,7 @@ function status() {
     JSON.stringify(
       {
         app: appIdentity(),
-        backendHash: hashFile(BUNDLED_CODEX_PATH),
+        backendHash: hashFile(BUNDLED_APP_SERVER_PATH),
         frontendOriginalAnchors: countMatches(archive, FRONTEND_OLD),
         frontendPatchedAnchors: countMatches(archive, FRONTEND_NEW),
         launchAgentInstalled: fs.existsSync(AGENT_PATH),

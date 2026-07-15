@@ -15,7 +15,7 @@ if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) {
 
 const sourceDir = path.join(stateDir, "build", `codex-${version}`);
 const outputDir = path.join(stateDir, "bin");
-const outputPath = path.join(outputDir, `codex-${version}`);
+const outputPath = path.join(outputDir, `chatgpt-app-server-${version}`);
 const patchPath = path.join(programDir, "patches", "desktop-hosted-tools.patch");
 const userHome = os.homedir();
 const cargoHome = path.join(userHome, ".cargo");
@@ -132,8 +132,11 @@ if (!fs.existsSync(markerPath)) {
   fs.writeFileSync(markerPath, `${version}\n`);
 }
 
+// ChatGPT Desktop ships its app-server inside the upstream `codex-cli` package's `codex` binary.
+// This build is cached only for the Desktop app and is never installed as a global Codex CLI.
 // Cargo resolves every workspace member before a package-only build. The standalone WebRTC crate
-// is not used by codex-cli, but its libyuv submodule may be unavailable on restricted networks.
+// is not used by the Desktop app-server, but its libyuv submodule may be unavailable on restricted
+// networks.
 excludeUnrelatedRealtimeWebrtc();
 
 const toolchainFile = path.join(sourceDir, "codex-rs", "rust-toolchain.toml");

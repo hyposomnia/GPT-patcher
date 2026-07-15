@@ -3,6 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "description": "Self-maintaining macOS ChatGPT Desktop patches for follow-up history and custom-provider hosted tools.",
+  "license": "MIT",
+  "author": "Hyposomnia",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyposomnia/GPT-patcher.git"
+  },
+  "homepage": "https://github.com/hyposomnia/GPT-patcher#readme",
+  "bugs": {
+    "url": "https://github.com/hyposomnia/GPT-patcher/issues"
+  },
+  "keywords": [
+    "chatgpt",
+    "macos",
+    "desktop",
+    "patcher",
+    "codex"
+  ],
   "type": "module",
   "scripts": {
     "build": "./build.sh",
