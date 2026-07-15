@@ -1,0 +1,171 @@
+diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
+index e200413..5c2b139 100644
+--- a/codex-rs/core/src/session/turn_context.rs
++++ b/codex-rs/core/src/session/turn_context.rs
+@@ -150,6 +150,18 @@ enum TurnMultiAgentRuntime {
+     Preview,
+ }
+ 
++fn model_info_for_provider_auth(
++    mut model_info: ModelInfo,
++    provider: &ModelProviderInfo,
++    auth_manager: Option<&AuthManager>,
++) -> ModelInfo {
++    let uses_codex_backend = auth_manager.is_some_and(AuthManager::current_auth_uses_codex_backend);
++    if !provider.is_openai() && provider.requires_openai_auth && !uses_codex_backend {
++        model_info.use_responses_lite = false;
++    }
++    model_info
++}
++
+ impl TurnContext {
+     pub(crate) fn item_ids_enabled(&self) -> bool {
+         self.config.features.enabled(Feature::ItemIds)
+@@ -222,6 +234,11 @@ impl TurnContext {
+         let model_info = models_manager
+             .get_model_info(model.as_str(), &config.to_models_manager_config())
+             .await;
++        let model_info = model_info_for_provider_auth(
++            model_info,
++            self.provider.info(),
++            self.auth_manager.as_deref(),
++        );
+         let supported_reasoning_levels = model_info
+             .supported_reasoning_levels
+             .iter()
+@@ -497,6 +514,8 @@ impl Session {
+         sub_id: String,
+         skills_snapshot: HostSkillsSnapshot,
+     ) -> TurnContext {
++        let model_info =
++            model_info_for_provider_auth(model_info, &provider, auth_manager.as_deref());
+         let reasoning_effort = session_configuration.collaboration_mode.reasoning_effort();
+         let reasoning_summary = session_configuration
+             .model_reasoning_summary
+diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
+index 9d9b762..6ffe1c6 100644
+--- a/codex-rs/core/src/tools/spec_plan.rs
++++ b/codex-rs/core/src/tools/spec_plan.rs
+@@ -60,7 +60,6 @@ use crate::tools::registry::override_tool_exposure;
+ use crate::tools::router::ToolRouter;
+ use crate::tools::router::ToolRouterParams;
+ use codex_features::Feature;
+-use codex_login::AuthManager;
+ use codex_mcp::ToolInfo;
+ use codex_protocol::config_types::WebSearchMode;
+ use codex_protocol::dynamic_tools::DynamicToolNamespaceTool;
+@@ -370,16 +369,7 @@ fn agent_jobs_worker_tools_enabled(turn_context: &TurnContext) -> bool {
+ }
+ 
+ fn image_generation_runtime_enabled(turn_context: &TurnContext) -> bool {
+-    (turn_context
+-        .provider
+-        .info()
+-        .uses_openai_actor_authorization()
+-        || (turn_context.provider.info().requires_openai_auth
+-            && turn_context
+-                .auth_manager
+-                .as_deref()
+-                .is_some_and(AuthManager::current_auth_uses_codex_backend)))
+-        && turn_context.provider.capabilities().image_generation
++    turn_context.provider.capabilities().image_generation
+         && turn_context
+             .model_info
+             .input_modalities
+diff --git a/codex-rs/core/src/tools/spec_plan_tests.rs b/codex-rs/core/src/tools/spec_plan_tests.rs
+index 7fd4c69..73b2ace 100644
+--- a/codex-rs/core/src/tools/spec_plan_tests.rs
++++ b/codex-rs/core/src/tools/spec_plan_tests.rs
+@@ -1525,6 +1525,25 @@ async fn hosted_web_search_and_standalone_image_generation_follow_runtime_gates(
+     .await;
+     image_generation.assert_visible_contains(&["image_gen"]);
+ 
++    let api_key_provider = probe_with(
++        |turn| {
++            turn.auth_manager = Some(AuthManager::from_auth_for_testing(CodexAuth::from_api_key(
++                "test-api-key",
++            )));
++            turn.provider = create_model_provider(
++                turn.config.model_provider.clone(),
++                turn.auth_manager.clone(),
++            );
++            turn.model_info.input_modalities = vec![InputModality::Image];
++        },
++        ToolPlanInputs {
++            extension_tool_executors: vec![image_generation_tool.clone()],
++            ..Default::default()
++        },
++    )
++    .await;
++    api_key_provider.assert_visible_contains(&["image_gen"]);
++
+     let extension_disabled = probe_with(
+         |turn| {
+             use_chatgpt_auth(turn);
+diff --git a/codex-rs/core/tests/suite/responses_lite.rs b/codex-rs/core/tests/suite/responses_lite.rs
+index 83cc620..45cb22e 100644
+--- a/codex-rs/core/tests/suite/responses_lite.rs
++++ b/codex-rs/core/tests/suite/responses_lite.rs
+@@ -290,6 +290,50 @@ async fn responses_lite_exposes_standalone_tools_for_actor_authorized_provider()
+     Ok(())
+ }
+ 
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn api_key_custom_provider_uses_hosted_tools_in_standard_responses() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++
++    let server = responses::start_mock_server().await;
++    let response_mock = responses::mount_sse_once(
++        &server,
++        responses::sse(vec![
++            responses::ev_response_created("resp-1"),
++            responses::ev_completed("resp-1"),
++        ]),
++    )
++    .await;
++
++    let auth = CodexAuth::from_api_key("dummy");
++    let extensions = responses_extensions(&auth);
++    let mut builder = test_codex()
++        .with_auth(auth)
++        .with_extensions(extensions)
++        .with_model_info_override("gpt-5.4", |model_info| {
++            model_info.use_responses_lite = true;
++            configure_image_capable_model(model_info);
++        })
++        .with_config(|config| {
++            configure_responses_tools(config);
++            config.model_provider.name = "custom".to_string();
++            config.model_provider.requires_openai_auth = true;
++        });
++    let test = builder.build(&server).await?;
++
++    test.submit_turn("Use hosted tools").await?;
++
++    let request = response_mock.single_request();
++    assert_eq!(request.header(RESPONSES_LITE_HEADER), None);
++    let body = request.body_json();
++    let tools = body["tools"]
++        .as_array()
++        .context("standard Responses request should include tools")?;
++    assert!(has_hosted_tool(tools, "web_search"));
++    assert!(has_namespaced_tool(tools, "image_gen", "imagegen"));
++
++    Ok(())
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn responses_lite_compact_request_uses_lite_transport_contract() -> Result<()> {
+     skip_if_no_network!(Ok(()));
+diff --git a/codex-rs/ext/web-search/src/extension.rs b/codex-rs/ext/web-search/src/extension.rs
+index 84e3eee..eb0942c 100644
+--- a/codex-rs/ext/web-search/src/extension.rs
++++ b/codex-rs/ext/web-search/src/extension.rs
+@@ -42,6 +42,7 @@ impl From<&Config> for WebSearchExtensionConfig {
+         Self {
+             // Core selects this executor per turn using the feature flag or model metadata.
+             available: (config.model_provider.is_openai()
++                || config.model_provider.requires_openai_auth
+                 || config.model_provider.uses_openai_actor_authorization())
+                 && web_search_mode != WebSearchMode::Disabled,
+             provider: config.model_provider.clone(),

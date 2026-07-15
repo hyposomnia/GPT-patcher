@@ -1,0 +1,19 @@
+{
+  "name": "gpt-patcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-maintaining macOS ChatGPT Desktop patches for follow-up history and custom-provider hosted tools.",
+  "type": "module",
+  "scripts": {
+    "build": "./build.sh",
+    "check": "./scripts/check.sh",
+    "test": "./scripts/check.sh",
+    "status": "node fixer.mjs status",
+    "install": "./install.sh",
+    "restore": "node fixer.mjs restore",
+    "uninstall": "./uninstall.sh"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
