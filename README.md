@@ -1,46 +1,32 @@
 # GPT-patcher
 
-![Version](https://img.shields.io/badge/version-v0.2.0-blue)
+![Version](https://img.shields.io/badge/version-v0.1.0-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-面向 macOS ChatGPT Desktop 的轻量本地补丁和自动维护工具。它修复 Desktop 客户端中运行中
-追问的历史显示问题，并为使用 API key 的自定义 OpenAI-compatible provider 恢复 web search
-和 image generation。
-
-从 `v0.2.0` 开始，默认安装不再克隆 Codex 源码、安装 Rust 或编译 300+ MB 的 app-server。
-后端补丁由一个小于 4 KiB 的启动 shim 和一份模型目录完成。
+面向 macOS ChatGPT Desktop 的本地补丁和自动维护工具。它修复 Desktop 客户端中的运行中
+追问历史问题，并为使用 API key 的自定义 OpenAI-compatible provider 恢复受运行时能力
+控制的 web search 和 image generation 工具。
 
 > [!IMPORTANT]
-> 本项目会修改 `/Applications/ChatGPT.app` 内的 `app.asar` 和 bundled app-server 入口。
-> 安装、恢复或卸载前应先完全退出 ChatGPT。官方更新通常会覆盖修改，LaunchAgent 会在
-> 严格校验通过后自动重新应用。
+> 本项目会修改 `/Applications/ChatGPT.app` 内的 `app.asar` 和 bundled app-server。
+> 安装、恢复或卸载前应先完全退出 ChatGPT。ChatGPT 官方更新通常会覆盖这些修改，安装的
+> LaunchAgent 会在兼容性校验通过后自动重新应用。
 
-## 轻量方案如何工作
+## 项目边界
 
-ChatGPT Desktop 内置的原版 app-server 已经包含所需能力，只是对自定义 provider 有几层
-运行时门控。GPT-patcher 不再重编译它，而是：
+- 只处理 macOS ChatGPT Desktop app bundle；
+- 不安装、不替换也不修改全局 `codex` CLI；
+- 不提交预编译的 300+ MB app-server；
+- 不对未知客户端版本做模糊搜索或猜测性修改。
 
-1. 将原版 app-server 按 ChatGPT build 备份到专用状态目录；
-2. 在 app bundle 中放置一个约 1 KiB 的 zsh 启动 shim；
-3. shim 从现有 `$CODEX_HOME/auth.json` 读取 API key，仅注入到子进程环境，不复制到新文件；
-4. shim 使用临时 `-c` 覆盖将当前自定义 provider 暴露为 actor-authorized OpenAI-compatible
-   provider；
-5. 从匹配的官方 `openai/codex` tag 获取小型 `models.json`，生成
-   `use_responses_lite = false` 的本地目录，让自定义 endpoint 收到标准 Responses `tools[]`。
-
-原始 `config.toml` 和 `auth.json` 都不会被修改。启动时会额外向自定义 endpoint 发送：
-
-```text
-x-openai-actor-authorization: gpt-patcher
-```
-
-多数 OpenAI-compatible 服务会忽略未知请求头；若你的网关拒绝该头，image generation 的
-原版运行时门控无法通过。
+官方源码中的 Cargo package 名仍为 `codex-cli`，应用内置文件也仍叫 `codex`。这些是上游
+内部命名：本项目只把构建产物写入 ChatGPT Desktop bundle、项目 `.build/` 目录和专用
+维护缓存，不会写入 `PATH`、`~/.local/bin` 或其他全局 CLI 位置。
 
 ## 修复内容
 
-### 保留运行中的 steering follow-up
+### 1. 保留运行中的 steering follow-up
 
 Desktop 前端重建任务历史时，将：
 
@@ -55,31 +41,33 @@ preserveServerUserMessages: true
 ```
 
 运行中的追问在 `thread/read` hydration、打开或关闭 subagent 面板以及任务历史重建后仍然
-可见。现有的 client-id/content 去重逻辑继续避免重复气泡。
+可见。现有的 client-id/content 去重逻辑继续负责避免重复气泡。
 
-### 恢复自定义 provider 的工具
+### 2. 恢复自定义 API-key provider 的 hosted tools
 
-轻量 shim 会让原版 app-server：
+对于声明 `requires_openai_auth = true` 的自定义 provider：
 
-- 使用标准 Responses，而不是 Responses Lite；
-- 在 `tools[]` 中提供 hosted web search；
-- 在普通模式或 code mode 中提供 image generation；
-- 继续保留 provider capability、feature flag 和模型 image modality 检查。
+- API-key 认证不再无条件隐藏 image generation；
+- web-search extension 可以按运行时能力启用；
+- 非官方 provider 使用标准 Responses `tools[]`，不强制走 Responses Lite；
+- provider capability、feature flag 和模型 image modality 检查仍然保留。
 
-### ChatGPT 更新后自动维护
+### 3. ChatGPT 更新后自动维护
 
-安装脚本创建 `com.local.chatgpt-desktop-fixer` LaunchAgent。它每五分钟以及 ChatGPT bundle
-或 `config.toml` 变化时执行检查：
+安装脚本会创建 `com.local.chatgpt-desktop-fixer` LaunchAgent。它每五分钟以及 ChatGPT
+bundle 发生变化时执行检查：
 
-1. 识别 ChatGPT build 和原版 app-server 版本；
-2. 备份并验证原版 app-server；
-3. 下载对应官方 tag 中的一份 `models.json`，通常只有几十到几百 KiB；
-4. 生成标准 Responses 模型目录和新的轻量 shim；
-5. 重新应用前端等长补丁。
+1. 读取 Desktop 内置 app-server 版本；
+2. 拉取 `openai/codex` 对应的 `rust-v<version>` tag；
+3. 使用官方 `Cargo.lock` 并严格校验补丁；
+4. 编译、strip、签名并验证新的 Desktop app-server；
+5. 重新应用前端和后端补丁。
 
-任何版本、目录、哈希或前端锚点校验失败都会停止修改并写入日志。
+任何版本、锚点或 patch 校验失败都会停止修改并写入日志。
 
 ## 已验证版本
+
+`v0.1.0` 已在以下组合完成编译、安装和重启验证：
 
 | 组件 | 版本 |
 | --- | --- |
@@ -88,25 +76,24 @@ preserveServerUserMessages: true
 | Bundled app-server | `0.144.2` |
 | 架构 | Apple Silicon (`arm64`) |
 
-在原版 `0.144.2` 上进行的 request-level probe 已确认：
-
-- Authorization 仍使用原有 API key；
-- 标准 Responses 请求不带 Responses Lite header；
-- `web_search` 出现在 `tools[]`；
-- `image_gen__imagegen` 出现在 code-mode 工具集中。
+后续 ChatGPT 版本只有在前端精确锚点唯一且后端 patch 能干净应用时才会被修改。
 
 ## 环境要求
 
 - Apple Silicon macOS；
 - `/Applications/ChatGPT.app`，或通过 `CHATGPT_APP_PATH` 指定其他位置；
 - Node.js 20 或更高版本；
-- 当前自定义 provider 的 API key 已保存在 `$CODEX_HOME/auth.json`；
-- 网络可访问 GitHub Raw，以便新 app-server 版本首次获取官方模型目录。
+- Git；
+- Xcode Command Line Tools；
+- rustup/Cargo；
+- 数 GB 可用空间用于首次源码和 Rust release target。
 
-默认安装不需要 Rust、Cargo、Xcode Command Line Tools 或 Codex 源码。通过 Git 克隆仓库时
-自然仍需要 Git，也可以直接下载源码归档。
+构建器会安装目标 Codex tag 的 `rust-toolchain.toml` 所指定的 Rust 工具链。首次完整构建
+通常需要下载接近 1 GB 的依赖，并产生数 GB 的临时 target；同版本增量构建会快很多。
 
 ## 快速开始
+
+克隆仓库并运行检查：
 
 ```sh
 git clone https://github.com/hyposomnia/GPT-patcher.git
@@ -120,7 +107,8 @@ npm test
 ./install.sh
 ```
 
-重新打开 ChatGPT：
+首次安装如果没有可用缓存，会自动完成官方源码拉取和 release 构建。完成后重新打开
+ChatGPT：
 
 ```sh
 open -a ChatGPT
@@ -134,60 +122,67 @@ npm run status
 
 成功状态应包含：
 
-- `backendIsLightweightShim: true`；
 - `frontendOriginalAnchors: 0`；
 - `frontendPatchedAnchors: 1`；
-- `state.backendMode: "lightweight-shim"`；
-- `launchAgentInstalled: true`。
+- `launchAgentInstalled: true`；
+- `state.frontendStatus: "patched"`。
+
+## 只编译 Desktop app-server
+
+```sh
+./build.sh
+```
+
+默认读取当前 ChatGPT bundle 中的 app-server 版本，产物位于：
+
+```text
+.build/bin/chatgpt-app-server-<version>
+```
+
+安装器会优先复用这个目录中的已编译产物，避免重复构建。
+
+也可以指定版本或构建目录：
+
+```sh
+CHATGPT_APP_SERVER_VERSION=0.144.2 \
+GPT_PATCHER_BUILD_DIR=/path/to/build \
+./build.sh
+```
+
+`CODEX_VERSION` 作为旧版兼容变量保留。上游内部的 release build 命令为：
+
+```text
+cargo build --release -p codex-cli --bin codex
+```
+
+构建完成后会验证版本，strip 二进制，并检查或补充 ad-hoc code signature。为了避免与
+Desktop app-server 无关的 `realtime-webrtc/libyuv` 下载，构建器只会在确认其他 Cargo
+manifest 没有引用该 workspace member 后，将它从本次 package-only build 中排除。
 
 ## 常用命令
 
 | 命令 | 用途 |
 | --- | --- |
-| `npm test` | 运行语法、静态检查和隔离的轻量 shim 集成测试 |
-| `npm run install` | 安装轻量补丁和自动维护 LaunchAgent |
-| `npm run status` | 查看 ChatGPT、shim、前端补丁和 LaunchAgent 状态 |
+| `npm test` | 运行脚本语法、补丁标记和仓库静态检查 |
+| `npm run build` | 编译当前 Desktop 版本的 patched app-server |
+| `npm run install` | 安装补丁和自动维护 LaunchAgent |
+| `npm run status` | 查看当前 ChatGPT、补丁和 LaunchAgent 状态 |
 | `node fixer.mjs apply` | 立即执行一次维护 |
 | `npm run restore` | 恢复当前 ChatGPT build 的原始文件 |
 | `npm run uninstall` | 恢复文件并卸载 LaunchAgent |
-| `npm run cleanup` | 删除旧版在专用状态目录留下的 Rust 构建和 patched binary 缓存 |
-| `npm run legacy-build` | 开发者显式使用旧版源码编译方案 |
 
-恢复或卸载前同样应先完全退出 ChatGPT。
-
-若仓库本地还保留旧版 `.build/`，可显式一并清理：
-
-```sh
-GPT_PATCHER_CLEAN_LOCAL_BUILD=1 npm run cleanup
-```
-
-该命令不会卸载全局 Rust/rustup，也不会删除 ChatGPT 原版备份。
+恢复或卸载前同样应先完全退出 ChatGPT，完成后再重新打开。
 
 ## 配置变量
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `CHATGPT_APP_PATH` | `/Applications/ChatGPT.app` | 自定义 ChatGPT app 路径 |
-| `CHATGPT_FIXER_STATE_DIR` | `~/Library/Application Support/ChatGPT Desktop Fixer` | 专用维护状态目录 |
-| `CHATGPT_FIXER_NODE_PATH` | 自动检测 | LaunchAgent 使用的 Node.js |
-| `CODEX_HOME` | `~/.codex` | Desktop 使用的 Codex 配置与认证目录 |
-| `GPT_PATCHER_MODEL_PROVIDER` | 读取根级 `model_provider` | 显式指定要覆盖的自定义 provider id |
-| `GPT_PATCHER_MODEL_CATALOG_SOURCE` | 自动查找或下载 | 使用已有官方 `models.json`，适合离线安装和测试 |
-| `GPT_PATCHER_API_KEY` | 从 `auth.json` 运行时读取 | 不使用 `auth.json` 时显式提供 shim 的 API key |
-| `GPT_PATCHER_CLEAN_LOCAL_BUILD` | `0` | 设为 `1` 时 cleanup 同时删除仓库 `.build/` |
-| `CODEX_SOURCE_DIR` | 空 | 测试 legacy Rust patch 是否仍能应用到已有源码 |
-
-provider id 当前只接受字母、数字、下划线和连字符。原配置表必须存在，例如：
-
-```toml
-model_provider = "custom"
-
-[model_providers.custom]
-name = "My endpoint"
-base_url = "https://example.com/v1"
-wire_api = "responses"
-requires_openai_auth = true
-```
+| `CHATGPT_APP_SERVER_VERSION` | 从 app bundle 读取 | 指定要构建的 app-server 版本 |
+| `GPT_PATCHER_BUILD_DIR` | `<repo>/.build` | 自定义源码、target 和产物目录 |
+| `CHATGPT_FIXER_STATE_DIR` | `~/Library/Application Support/ChatGPT Desktop Fixer` | 自定义维护状态目录 |
+| `CHATGPT_FIXER_NODE_PATH` | 自动检测 | 指定 LaunchAgent 使用的 Node.js |
+| `CODEX_SOURCE_DIR` | 空 | 测试时额外验证 patch 能否应用到已有 Codex 源码 |
 
 ## 状态、备份和日志
 
@@ -197,56 +192,46 @@ requires_openai_auth = true
 ~/Library/Application Support/ChatGPT Desktop Fixer
 ```
 
-轻量模式使用：
+其中包含：
 
 ```text
-backups/<chatgpt-build>/codex.original            原版 app-server，也是 shim 的执行目标
-catalogs/models-<version>-standard-responses.json 小型模型目录
-program/fixer.mjs                                 LaunchAgent 维护程序
-maintain.log                                      自动维护日志
-state.json                                        当前补丁状态
+backups/<chatgpt-build>/codex.original  原始 app-server 备份
+bin/                                    编译缓存
+build/                                  官方 Codex 源码和 Rust target
+program/                                LaunchAgent 使用的维护脚本
+maintain.log                            自动维护日志
+state.json                              当前补丁状态
 ```
 
-原版 app-server 备份约 200–300 MB，但它替代了 app bundle 内原来的同一文件，整体不会再额外
-保留一份 300+ MB patched binary，也不会产生数 GB Rust `target/`。
+每个 ChatGPT build 的原始 app-server 只备份一次。前端修改是等长替换，因此可以直接使用
+精确锚点恢复。
 
 ## 安全设计
 
-- 前端只进行等长、唯一锚点替换，并严格验证修改前后数量；
-- shim 只执行按当前 ChatGPT build 保存和验证过的原版 app-server；
-- API key 每次启动从现有 `auth.json` 读取到环境，不写入 shim、状态或模型目录；
-- 模型目录只接受非空、slug 唯一的 JSON，并将所有 `use_responses_lite` 精确设为 `false`；
-- 新版本目录只从匹配的官方 `openai/codex` `rust-v<version>` tag 获取；
-- app、config 或 bundled backend 在维护过程中变化时会拒绝安装；
-- 未知前端锚点和非托管 backend 会失败关闭。
+- 前端只进行等长、精确锚点替换，并严格验证原始和补丁锚点数量；
+- 后端 patch 必须通过 `git apply --check`；
+- 使用官方版本 tag 和 `Cargo.lock` 从源码执行 release build；
+- 安装前后验证 app-server 的版本与 SHA-256；
+- 更新构建期间再次检查 ChatGPT build 和 bundled app-server 版本，防止竞态覆盖；
+- 临时文件完成验证后再原子替换应用资源；
+- 未知版本或不匹配结构会失败关闭，不做模糊修改。
 
 ## 已知限制与风险
 
 - 修改 app bundle 会使官方签名的 bundle 内容发生变化；
-- ChatGPT 更新会覆盖 shim，重新应用需要能获取匹配版本的官方模型目录；
-- 轻量模式目前面向使用 `auth.json` API key 的自定义 Responses provider；
-- actor authorization 请求头会发送到自定义 endpoint；
-- 上游删除 `model_catalog_json`、改变 provider 门控或模型目录格式后，需要兼容性更新；
-- 仅测试 Apple Silicon macOS，未测试 Intel Mac、Windows 或 Linux。
+- ChatGPT 更新会覆盖补丁，重新应用可能需要重新编译；
+- 上游前端压缩结构或 Rust 源码变化后，补丁可能停止兼容；
+- 首次 release 构建耗时较长并占用较多磁盘空间；
+- 本项目只针对 Apple Silicon macOS，未测试 Intel Mac、Windows 或 Linux。
 
-如果 ChatGPT 无法启动，保持应用退出并运行：
+如果 ChatGPT 无法启动，先保持应用退出并运行：
 
 ```sh
 npm run restore
 ```
 
-然后重新打开 ChatGPT，并查看 `maintain.log`。
-
-## Legacy 源码构建
-
-`build.sh`、`build-backend.mjs` 和 `patches/desktop-hosted-tools.patch` 仍保留，供研究上游变化、
-验证行为差异或轻量门控失效时使用。它们不再由安装器或 LaunchAgent 自动调用。
-
-```sh
-npm run legacy-build
-```
-
-该命令仍需要 rustup/Cargo、官方 Codex 源码和数 GB 构建空间。普通用户无需运行。
+然后重新打开 ChatGPT，并查看 `maintain.log`。请勿在未知版本上手工放宽锚点或跳过
+`git apply --check`。
 
 ## 开发与测试
 
@@ -254,20 +239,16 @@ npm run legacy-build
 npm test
 ```
 
-隔离测试会创建一个假的 ChatGPT app bundle，验证 shim 安装、幂等、模型目录归一化和恢复，
-不会修改 `/Applications/ChatGPT.app`。
-
-若已有原版 app-server 和匹配的官方 `models.json`，可执行真实 request-level probe：
-
-```sh
-node scripts/probe-lightweight.mjs /path/to/codex.original /path/to/models.json
-```
-
-若还要验证 legacy Rust patch：
+若已有对应版本的官方 Codex 源码，可同时验证 patch：
 
 ```sh
 CODEX_SOURCE_DIR=/path/to/codex npm test
 ```
+
+当前后端 patch 包含以下上游单元和 request-level regression test：
+
+- `hosted_web_search_and_standalone_image_generation_follow_runtime_gates`；
+- `api_key_custom_provider_uses_hosted_tools_in_standard_responses`。
 
 贡献前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按照
 [SECURITY.md](SECURITY.md) 私下报告。

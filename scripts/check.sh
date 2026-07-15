@@ -7,8 +7,6 @@ PATCH_PATH="$PROJECT_DIR/patches/desktop-hosted-tools.patch"
 
 node --check "$PROJECT_DIR/fixer.mjs"
 node --check "$PROJECT_DIR/build-backend.mjs"
-node --check "$PROJECT_DIR/scripts/probe-lightweight.mjs"
-node --check "$PROJECT_DIR/scripts/test-lightweight.mjs"
 zsh -n "$PROJECT_DIR/build.sh"
 zsh -n "$PROJECT_DIR/install.sh"
 zsh -n "$PROJECT_DIR/uninstall.sh"
@@ -26,18 +24,14 @@ do
 done
 
 for expected in \
-  'GPT-patcher lightweight app-server shim v1' \
-  'model_catalog_json=' \
-  'x-openai-actor-authorization' \
-  'backendMode: "lightweight-shim"'
+  'chatgpt-app-server-${version}' \
+  'path.join(SOURCE_DIR, ".build", "bin")'
 do
-  if ! /usr/bin/grep -Fq "$expected" "$PROJECT_DIR/fixer.mjs"; then
-    print -u2 "Lightweight shim integration is missing: $expected"
+  if ! /usr/bin/grep -Fq "$expected" "$PROJECT_DIR/fixer.mjs" "$PROJECT_DIR/build-backend.mjs"; then
+    print -u2 "Desktop app-server cache integration is missing: $expected"
     exit 1
   fi
 done
-
-node "$PROJECT_DIR/scripts/test-lightweight.mjs"
 
 large_file=$(
   find "$PROJECT_DIR" \

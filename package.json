@@ -1,8 +1,8 @@
 {
   "name": "gpt-patcher",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "Lightweight macOS ChatGPT Desktop patches for follow-up history and custom-provider hosted tools.",
+  "description": "Self-maintaining macOS ChatGPT Desktop patches for follow-up history and custom-provider hosted tools.",
   "license": "MIT",
   "author": "Hyposomnia",
   "repository": {
@@ -22,9 +22,8 @@
   ],
   "type": "module",
   "scripts": {
-    "legacy-build": "./build.sh",
+    "build": "./build.sh",
     "check": "./scripts/check.sh",
-    "cleanup": "node fixer.mjs cleanup",
     "test": "./scripts/check.sh",
     "status": "node fixer.mjs status",
     "install": "./install.sh",
