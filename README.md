@@ -13,6 +13,14 @@
 > 安装、恢复或卸载前应先完全退出 ChatGPT。ChatGPT 官方更新通常会覆盖这些修改，安装的
 > LaunchAgent 会在兼容性校验通过后自动重新应用。
 
+> [!WARNING]
+> **GPT-patcher v0.1.0 与 ChatGPT Chrome 插件不兼容。**补丁会用本地编译、ad-hoc
+> 签名的 `codex` 替换 OpenAI 官方签名的 bundled app-server；Chrome 插件的本地通信会
+> 校验 OpenAI Team ID，因此可能被拒绝并记录 `missing-code-signing-identity`。保留补丁时
+> 请禁用 Chrome 插件并使用 ChatGPT 内置浏览器；如需恢复 Chrome 插件，应先恢复官方
+> ChatGPT app，再从 Plugins 页面重新添加 Chrome 插件。手动 ad-hoc 重签无法恢复 OpenAI
+> 的官方签名身份。
+
 ## 项目边界
 
 - 只处理 macOS ChatGPT Desktop app bundle；
@@ -229,6 +237,7 @@ state.json                              当前补丁状态
 ## 已知限制与风险
 
 - 修改 app bundle 会使官方签名的 bundle 内容发生变化；
+- 与 ChatGPT Chrome 插件存在代码签名身份冲突；保留补丁时应禁用该插件并使用内置浏览器；
 - ChatGPT 更新会覆盖补丁，重新应用可能需要重新编译；
 - 上游前端压缩结构或 Rust 源码变化后，补丁可能停止兼容；
 - 首次 release 构建耗时较长并占用较多磁盘空间；
